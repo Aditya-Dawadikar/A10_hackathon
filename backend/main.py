@@ -1,9 +1,10 @@
 import os
+from typing import Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Query
 from fastapi import HTTPException
 from pydantic import BaseModel
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from langchain_google_genai import ChatGoogleGenerativeAI
 from policy_controller import (
     create_policy, list_policies, create_group,
@@ -12,6 +13,19 @@ from policy_controller import (
 )
 
 from utils.sanitizer import PromptSanitizationAgent
+
+# Import observability functions if they exist
+try:
+    from observability import (
+        process_sanitize_request, 
+        get_metrics_data, 
+        get_logs_data, 
+        parse_time_range
+    )
+    OBSERVABILITY_ENABLED = True
+except ImportError:
+    OBSERVABILITY_ENABLED = False
+    print("⚠️ Observability module not found. Metrics and logs endpoints will be disabled.")
 
 load_dotenv()
 
@@ -34,6 +48,24 @@ agent = PromptSanitizationAgent()
 class PromptRequest(BaseModel):
     target_llm: str
     prompt: str
+
+@app.get("/")
+async def health_check():
+    """Health check endpoint"""
+    return {
+        "status": "healthy",
+        "service": "AI Firewall Proxy",
+        "observability_enabled": OBSERVABILITY_ENABLED,
+        "endpoints": [
+            "/sanitize",
+            "/chat", 
+            "/metrics" if OBSERVABILITY_ENABLED else "/metrics (disabled)",
+            "/logs" if OBSERVABILITY_ENABLED else "/logs (disabled)",
+            "/policy",
+            "/policies",
+            "/group"
+        ]
+    }
 
 @app.post("/policy")
 async def api_create_policy(policy: PolicyIn):
@@ -74,11 +106,17 @@ async def api_remove_policy_from_group(group_id: str, policy_id: str):
 @app.post("/sanitize")
 async def sanitize(request: Request):
     body = await request.json()
-    prompt = body.get("prompt")
-    group_id = body.get("groupId")
-    group_name = body.get("groupName")
+    
+    # Support both legacy and new formats
+    prompt = body.get("prompt") or body.get("payload", "")
+    group_id = body.get("groupId") or body.get("group_id")
+    group_name = body.get("groupName") or body.get("group_name")
+    agent_id = body.get("agent_id")
+    
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Missing 'prompt' or 'payload' in request body")
 
-    result = await agent.process(prompt, group_id=group_id, group_name=group_name)  # ✅ await
+    result = await agent.process(prompt, group_id=group_id, group_name=group_name)
     return result
 
 @app.post("/chat")
@@ -87,7 +125,7 @@ async def chat(request: Request):
     prompt = body.get("prompt", "")
 
     # 1. Run sanitization
-    result = agent.process(prompt)
+    result = await agent.process(prompt)
 
     if result["status"] == "blocked":
         # Return immediately if malicious
@@ -103,3 +141,49 @@ async def chat(request: Request):
                 yield chunk.content
 
     return StreamingResponse(stream_llm(), media_type="text/plain")
+
+
+@app.get("/metrics")
+async def get_metrics(
+    from_time: Optional[str] = Query(None, alias="from"),
+    to_time: Optional[str] = Query(None, alias="to"), 
+    group: Optional[str] = Query(None)
+):
+    """Get firewall metrics with optional time range and grouping"""
+    
+    if not OBSERVABILITY_ENABLED:
+        raise HTTPException(status_code=501, detail="Observability module not available")
+    
+    # Handle time range shortcuts like "1h", "24h", "7d"
+    if from_time and from_time in ["1h", "24h", "7d"]:
+        from_time, to_time = parse_time_range(from_time)
+    
+    # Set group_by parameter
+    group_by = None
+    if group == "agent_id":
+        group_by = "agent_id"
+    elif group == "status":
+        group_by = "status"
+    
+    metrics = get_metrics_data(from_time, to_time, group_by)
+    return JSONResponse(content=metrics)
+
+@app.get("/logs")
+async def get_logs(
+    status: Optional[str] = Query(None),
+    limit: int = Query(10, ge=1, le=100)
+):
+    """Get recent firewall logs with optional status filter"""
+    
+    if not OBSERVABILITY_ENABLED:
+        raise HTTPException(status_code=501, detail="Observability module not available")
+    
+    # Validate status parameter
+    if status and status not in ["allowed", "redacted", "blocked"]:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Invalid status. Must be one of: allowed, redacted, blocked"}
+        )
+    
+    logs = get_logs_data(status, limit)
+    return JSONResponse(content=logs)
