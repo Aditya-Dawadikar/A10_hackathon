@@ -85,12 +85,14 @@ async def sanitize(request: Request):
 async def chat(request: Request):
     body = await request.json()
     prompt = body.get("prompt", "")
+    group_id = body.get("groupId")
+    group_name = body.get("groupName")
 
-    # 1. Run sanitization
-    result = agent.process(prompt)
+    # 1. Run sanitization (await just like /sanitize)
+    result = await agent.process(prompt, group_id=group_id, group_name=group_name)
 
     if result["status"] == "blocked":
-        # Return immediately if malicious
+        # Return JSON immediately if malicious
         return result
 
     # 2. Stream LLM response for allowed prompts
@@ -98,8 +100,8 @@ async def chat(request: Request):
 
     async def stream_llm():
         async for chunk in agent.llm.astream(redacted_prompt):
-            # Each chunk is a message object -> yield only text tokens
             if chunk.content:
+                # yield plain text tokens
                 yield chunk.content
 
     return StreamingResponse(stream_llm(), media_type="text/plain")
