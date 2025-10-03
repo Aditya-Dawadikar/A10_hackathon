@@ -1,11 +1,12 @@
 # ---------- Sanitization Agent ----------
 import os
-from dotenv import load_dotenv
 import re
+from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.prompts import ChatPromptTemplate
 from langchain.schema import StrOutputParser
 from langchain_core.runnables import RunnableSequence
+from policy_controller import get_group_with_policies  # import your DB helper
 
 load_dotenv()
 
@@ -16,19 +17,9 @@ if not GOOGLE_API_KEY:
 
 class PromptSanitizationAgent:
     def __init__(self):
-        # Regex rules
-        self.redaction_rules = {
-            "ssn": (re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), "[REDACTED_SSN]"),
-            "credit_card": (re.compile(r"\b\d{16}\b"), "[REDACTED_CARD]"),
-            "api_key": (re.compile(r"\b[A-Za-z0-9+/=]{32,}\b"), "[REDACTED_KEY]"),
-            "email": (re.compile(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+"), "[REDACTED_EMAIL]"),
-            "system_override": (re.compile(r"(ignore\s+previous\s+instructions|system\s+prompt|jailbreak)", re.IGNORECASE), "[REDACTED_OVERRIDE]"),
-            "shell_cmd": (re.compile(r"(rm\s+-rf\s+/|shutdown\s+-h|del\s+/f\s+/s|wget\s+http|curl\s+http)", re.IGNORECASE), "[REDACTED_CMD]")
-        }
-
         # LLM
         self.llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",   # Replace with valid model
+            model="gemini-2.5-flash",   # ✅ adjust if needed
             temperature=0,
             google_api_key=GOOGLE_API_KEY
         )
@@ -46,7 +37,7 @@ class PromptSanitizationAgent:
         self.redact_prompt = ChatPromptTemplate.from_messages([
             ("system", 
              "You are a redactor. Rewrite the user prompt by masking sensitive info "
-             "(emails, SSNs, API keys, commands, overrides). Replace with [REDACTED]. "
+             "(emails, SSNs, phones, API keys, commands, overrides). Replace with [REDACTED]. "
              "Keep everything else unchanged."),
             ("human", "{user_prompt}")
         ])
@@ -54,13 +45,19 @@ class PromptSanitizationAgent:
             self.redact_prompt | self.llm | StrOutputParser()
         )
 
-    def process(self, prompt: str) -> dict:
-        # Step 1: Intent classification
+    async def process(self, prompt: str, group_id: str = None, group_name: str = None) -> dict:
+        """
+        Sanitize a prompt by:
+        1. Checking intent (safe/malicious)
+        2. If safe, applying policies defined in the group
+        - Redact policies → mask matched info
+        - Block policies → block if matched
+        """
+        # --- Step 1: Intent classification ---
         intent = self.intent_classifier.invoke({"user_prompt": prompt}).strip().lower()
         if intent not in ["safe", "malicious"]:
             intent = "safe"
 
-        # Step 2: Block malicious
         if intent == "malicious":
             return {
                 "status": "blocked",
@@ -68,20 +65,59 @@ class PromptSanitizationAgent:
                 "original_prompt": prompt
             }
 
-        # Step 3: Redact safe prompts
+        # --- Step 2: Load group + policies ---
+        group = await get_group_with_policies(group_id=group_id, name=group_name)
+        if not group:
+            return {
+                "status": "blocked",
+                "intent": "malicious",
+                "original_prompt": prompt,
+                "reason": "No matching group found"
+            }
+
+        # Separate block vs redact policies
+        block_policies = []
+        redact_policies = []
+        for p in group["policies"]:
+            if not p["active"]:
+                continue
+            try:
+                compiled = re.compile(p["pattern"], re.IGNORECASE)
+                if p.get("type") == "block":
+                    block_policies.append((compiled, p))
+                else:  # default = redact
+                    redact_policies.append((compiled, p))
+            except re.error:
+                print(f"⚠️ Invalid regex in policy {p['name']}")
+
+        # --- Step 3: Apply block policies first ---
+        for pattern, policy in block_policies:
+            if pattern.search(prompt):
+                return {
+                    "status": "blocked",
+                    "intent": "malicious",
+                    "group": {"id": group["id"], "name": group["name"]},
+                    "original_prompt": prompt,
+                    "reason": f"Blocked by policy: {policy['name']}"
+                }
+
+        # --- Step 4: Apply redact policies ---
         redacted = prompt
         regex_applied = False
-        for _, (pattern, replacement) in self.redaction_rules.items():
+        for pattern, policy in redact_policies:
             if pattern.search(redacted):
                 regex_applied = True
-                redacted = pattern.sub(replacement, redacted)
+                redacted = pattern.sub(policy["replacement"], redacted)
 
-        if not regex_applied:
-            redacted = self.llm_redactor.invoke({"user_prompt": prompt})
+        if redact_policies and not regex_applied:
+            redacted = prompt
 
+        # --- Step 6: If no redact policies → return original ---
         return {
             "status": "allowed",
             "intent": intent,
+            "group": {"id": group["id"], "name": group["name"]},
             "original_prompt": prompt,
             "redacted_prompt": redacted
         }
+
