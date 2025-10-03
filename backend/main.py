@@ -4,11 +4,13 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Query
 from fastapi import HTTPException
 from pydantic import BaseModel
+from typing import List
 from fastapi.responses import StreamingResponse, JSONResponse
 from langchain_google_genai import ChatGoogleGenerativeAI
 from policy_controller import (
     create_policy, list_policies, create_group,
     add_policy_to_group, remove_policy_from_group, get_group_with_policies,
+    get_all_groups_with_policies, update_group_policies, delete_group,
     PolicyIn, GroupIn
 )
 
@@ -88,6 +90,16 @@ async def get_group_info(
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
     return group
+
+@app.get("/groups")
+async def get_all_groups():
+    try:
+        groups = await get_all_groups_with_policies()
+        if not groups:
+            raise HTTPException(status_code=404, detail="Groups not found")
+        return groups
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/group/{group_id}/add/{policy_id}")
 async def api_add_policy_to_group(group_id: str, policy_id: str):
@@ -189,3 +201,21 @@ async def get_logs(
     
     logs = get_logs_data(status, limit)
     return JSONResponse(content=logs)
+
+class GroupPoliciesUpdate(BaseModel):
+    policy_ids: List[str]
+
+@app.put("/{group_id}/policies")
+async def api_update_group_policies(group_id: str, body: GroupPoliciesUpdate):
+    updated = await update_group_policies(group_id, body.policy_ids)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Group not found")
+    return updated
+
+@app.delete("/group/{group_id}")
+async def api_delete_group(group_id: str):
+    """Delete a group by its ID"""
+    deleted = await delete_group(group_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Group not found")
+    return {"message": "Group deleted successfully"}

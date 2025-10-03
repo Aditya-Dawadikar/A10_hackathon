@@ -146,3 +146,36 @@ async def get_group_with_policies(group_id: str = None, name: str = None):
         "name": doc["name"],
         "policies": policies
     }
+
+async def get_all_groups_with_policies():
+    groups = []
+    cursor = groups_collection.find({})
+
+    async for doc in cursor:
+        # Expand policies for this group
+        policies = []
+        for pid in doc.get("policy_ids", []):
+            p = await policies_collection.find_one({"_id": ObjectId(pid)})
+            if p:
+                policies.append({
+                    "id": str(p["_id"]),
+                    "name": p["name"],
+                    "pattern": p["pattern"],
+                    "replacement": p["replacement"],
+                    "active": p["active"]
+                })
+
+        groups.append({
+            "id": str(doc["_id"]),
+            "name": doc["name"],
+            "policies": policies
+        })
+
+    return groups
+
+async def update_group_policies(group_id: str, policy_ids: list[str]):
+    await groups_collection.update_one(
+        {"_id": ObjectId(group_id)},
+        {"$set": {"policy_ids": policy_ids}}
+    )
+    return await get_group_with_policies(group_id=group_id)

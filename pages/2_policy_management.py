@@ -2,77 +2,116 @@ import streamlit as st
 import requests
 import json
 from typing import Dict, List, Optional
+from pydantic import BaseModel
+
+class PolicyIn(BaseModel):
+    name: str
+    pattern: str
+    replacement: str
+    active: bool = True
+
+class GroupIn(BaseModel):
+    name: str
+    policies: List[str] = []  # List of policy IDs
 
 st.set_page_config(page_title="Policy Management", page_icon="🛡️", layout="wide")
 
 # Configuration
-USE_DUMMY = True
 API_BASE_URL = "http://localhost:8000"
 
+# API Functions
+def get_all_groups():
+    try:
+        # Get list of all groups using group endpoint
+        response = requests.get(f"{API_BASE_URL}/groups")
+
+        print(response.json())  # Debugging line to print the response
+
+        if response.status_code == 200:
+            result = response.json()
+            # If a single group is returned, wrap it in a list
+            if isinstance(result, dict):
+                return [result]
+            return result
+        elif response.status_code == 404:
+            return []
+        else:
+            st.error(f"Error fetching groups: {response.status_code}")
+            return []
+    except Exception as e:
+        st.error(f"Error connecting to API: {str(e)}")
+        return []
+
+def create_new_group(group_data):
+    try:
+        response = requests.post(f"{API_BASE_URL}/group", json=group_data)
+        if response.status_code == 200:
+            return response.json()
+        else:
+            st.error(f"Error creating group: {response.status_code}")
+            return None
+    except Exception as e:
+        st.error(f"Error connecting to API: {str(e)}")
+        return None
+
+def get_group_details(group_id=None, name=None):
+    try:
+        params = {}
+        if group_id:
+            params['groupId'] = group_id
+        if name:
+            params['name'] = name
+        response = requests.get(f"{API_BASE_URL}/group", params=params)
+        if response.status_code == 200:
+            return response.json()
+        elif response.status_code == 404:
+            return None
+        else:
+            st.error(f"Error fetching group details: {response.status_code}")
+            return None
+    except Exception as e:
+        st.error(f"Error connecting to API: {str(e)}")
+        return None
+
+def add_policy_to_group(group_id, policy_id):
+    try:
+        response = requests.post(f"{API_BASE_URL}/group/{group_id}/add/{policy_id}")
+        if response.status_code == 200:
+            return response.json()
+        else:
+            st.error(f"Error adding policy to group: {response.status_code}")
+            return None
+    except Exception as e:
+        st.error(f"Error connecting to API: {str(e)}")
+        return None
+
+def remove_policy_from_group(group_id, policy_id):
+    try:
+        response = requests.delete(f"{API_BASE_URL}/group/{group_id}/remove/{policy_id}")
+        if response.status_code == 200:
+            return response.json()
+        else:
+            st.error(f"Error removing policy from group: {response.status_code}")
+            return None
+    except Exception as e:
+        st.error(f"Error connecting to API: {str(e)}")
+        return None
+
+def create_new_policy(policy_data):
+    try:
+        response = requests.post(f"{API_BASE_URL}/policy", json=policy_data)
+        if response.status_code == 200:
+            return response.json()
+        else:
+            st.error(f"Error creating policy: {response.status_code}")
+            return None
+    except Exception as e:
+        st.error(f"Error connecting to API: {str(e)}")
+        return None
+
 # Initialize session state
-if "dummy_groups" not in st.session_state:
-    st.session_state.dummy_groups = [
-        {
-            "id": "group_1", 
-            "name": "Admin Group", 
-            "policies": [
-                {
-                    "id": "policy_1",
-                    "name": "Redact PII",
-                    "pattern": r"(\b\d{3}-\d{2}-\d{4}\b|\b\d{3}-\d{3}-\d{4}\b|[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)",
-                    "replacement": "[REDACTED_PII]",
-                    "active": True
-                },
-                {
-                    "id": "policy_2",
-                    "name": "Block Prompt Injection",
-                    "pattern": r"(ignore\s+previous\s+instructions|system\s+prompt|jailbreak|do\s+anything\s+now)",
-                    "replacement": "[REDACTED_INJECTION]",
-                    "active": True
-                },
-                {
-                    "id": "policy_3",
-                    "name": "Redact Secrets",
-                    "pattern": r"([A-Za-z0-9+/=]{32,})",
-                    "replacement": "[REDACTED_SECRET]",
-                    "active": True
-                }
-            ]
-        },
-        {
-            "id": "group_2", 
-            "name": "Developer Group", 
-            "policies": [
-                {
-                    "id": "policy_4",
-                    "name": "Block Prompt Injection",
-                    "pattern": r"(ignore\s+previous\s+instructions|system\s+prompt|jailbreak)",
-                    "replacement": "[REDACTED_INJECTION]",
-                    "active": True
-                },
-                {
-                    "id": "policy_5",
-                    "name": "Redact Secrets",
-                    "pattern": r"([A-Za-z0-9+/=]{32,})",
-                    "replacement": "[REDACTED_SECRET]",
-                    "active": True
-                }
-            ]
-        },
-        {
-            "id": "group_3", 
-            "name": "Basic User Group", 
-            "policies": [
-                {
-                    "id": "policy_6",
-                    "name": "Redact PII",
-                    "pattern": r"(\b\d{3}-\d{2}-\d{4}\b|[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)",
-                    "replacement": "[REDACTED_PII]",
-                    "active": True
-                }
-            ]
-        }
-    ]
+if "groups" not in st.session_state:
+    st.session_state.groups = get_all_groups()
 
 # Commented out user-related functionality for now
 # if "dummy_users" not in st.session_state:
@@ -94,80 +133,20 @@ if "edit_group_id" not in st.session_state:
 # if "edit_user_id" not in st.session_state:
 #     st.session_state.edit_user_id = None
 
-# Available security policy templates
-POLICY_TEMPLATES = [
-    {
-        "name": "Redact PII",
-        "pattern": r"(\b\d{3}-\d{2}-\d{4}\b|\b\d{3}-\d{3}-\d{4}\b|[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)",
-        "replacement": "[REDACTED_PII]"
-    },
-    {
-        "name": "Block Prompt Injection",
-        "pattern": r"(ignore\s+previous\s+instructions|system\s+prompt|jailbreak|do\s+anything\s+now)",
-        "replacement": "[REDACTED_INJECTION]"
-    },
-    {
-        "name": "Redact Secrets",
-        "pattern": r"([A-Za-z0-9+/=]{32,})",
-        "replacement": "[REDACTED_SECRET]"
-    },
-    {
-        "name": "Block Malicious Domain",
-        "pattern": r"(malicious\.example|evil\.com|bad-site\.org)",
-        "replacement": "[REDACTED_DOMAIN]"
-    },
-    {
-        "name": "Block SQL Injection",
-        "pattern": r"(DROP\s+TABLE|SELECT\s+\*\s+FROM|UNION\s+SELECT|--\s*$)",
-        "replacement": "[REDACTED_SQL]"
-    }
-]
+# Policies will be fetched from the API
 
-# API Functions (ready for backend - updated for groups)
+# Get the current groups from session state or API
 def get_groups() -> List[Dict]:
-    if USE_DUMMY:
-        return st.session_state.dummy_groups
     try:
-        response = requests.get(f"{API_BASE_URL}/groups")
-        return response.json()
-    except:
-        return []
-
-def create_group(group_data: Dict) -> bool:
-    if USE_DUMMY:
-        new_id = f"group_{len(st.session_state.dummy_groups) + 1}"
-        group_data["id"] = new_id
-        st.session_state.dummy_groups.append(group_data)
-        return True
-    try:
-        response = requests.post(f"{API_BASE_URL}/groups", json=group_data)
-        return response.status_code == 200
-    except:
-        return False
-
-def update_group(group_id: str, group_data: Dict) -> bool:
-    if USE_DUMMY:
-        for i, group in enumerate(st.session_state.dummy_groups):
-            if group["id"] == group_id:
-                group_data["id"] = group_id
-                st.session_state.dummy_groups[i] = group_data
-                return True
-        return False
-    try:
-        response = requests.put(f"{API_BASE_URL}/groups/{group_id}", json=group_data)
-        return response.status_code == 200
-    except:
-        return False
-
-def delete_group(group_id: str) -> bool:
-    if USE_DUMMY:
-        st.session_state.dummy_groups = [g for g in st.session_state.dummy_groups if g["id"] != group_id]
-        return True
-    try:
-        response = requests.delete(f"{API_BASE_URL}/groups/{group_id}")
-        return response.status_code == 200
-    except:
-        return False
+        # Refresh groups from API
+        groups = get_all_groups()
+        print("+++++++++++here+++++++++++++++++")
+        print(groups)
+        st.session_state.groups = groups
+        return groups
+    except Exception as e:
+        st.error(f"Error getting groups: {str(e)}")
+        return st.session_state.get('groups', [])
 
 # Commented out user-related API functions
 # def get_users() -> List[Dict]:
@@ -222,6 +201,32 @@ def reset_forms():
     st.session_state.edit_group_id = None
     # st.session_state.edit_user_id = None
 
+def get_available_policies():
+    try:
+        response = requests.get(f"{API_BASE_URL}/policies")
+        if response.status_code == 200:
+            return response.json()
+        elif response.status_code == 404:
+            return []
+        else:
+            st.error(f"Error fetching policies: {response.status_code}")
+            return []
+    except Exception as e:
+        st.error(f"Error connecting to API: {str(e)}")
+        return []
+
+def delete_group(group_id: str) -> bool:
+    try:
+        response = requests.delete(f"{API_BASE_URL}/group/{group_id}")
+        if response.status_code == 200:
+            return True
+        else:
+            st.error(f"Error deleting group: {response.status_code}")
+            return False
+    except Exception as e:
+        st.error(f"Error connecting to API: {str(e)}")
+        return False
+
 def render_group_form(group_data: Dict = None, is_edit: bool = False):
     with st.form(key="group_form" + ("_edit" if is_edit else "_add")):
         st.subheader("✏️ Edit Group" if is_edit else "➕ Add New Group")
@@ -235,49 +240,66 @@ def render_group_form(group_data: Dict = None, is_edit: bool = False):
         current_policies = group_data.get("policies", []) if group_data else []
         current_policy_names = [p["name"] for p in current_policies]
         
-        for template in POLICY_TEMPLATES:
+        # Fetch available policies from API
+        available_policies = get_available_policies()
+        
+        for policy in available_policies:
             # Check if this policy is currently active in the group
-            is_active = template["name"] in current_policy_names
+            is_active = policy["name"] in current_policy_names
             
-            if st.checkbox(template["name"], value=is_active, key=f"policy_{template['name']}"):
+            if st.checkbox(policy["name"], value=is_active, key=f"policy_{policy['name']}"):
                 # Find existing policy or create new one
-                existing_policy = next((p for p in current_policies if p["name"] == template["name"]), None)
+                existing_policy = next((p for p in current_policies if p["name"] == policy["name"]), None)
                 
                 if existing_policy:
                     selected_policies.append(existing_policy)
                 else:
-                    new_policy = {
-                        "id": f"policy_{len(selected_policies) + 1}",
-                        "name": template["name"],
-                        "pattern": template["pattern"],
-                        "replacement": template["replacement"],
-                        "active": True
-                    }
-                    selected_policies.append(new_policy)
+                    selected_policies.append(policy)
         
         col1, col2 = st.columns(2)
         with col1:
             if st.form_submit_button("💾 Save Group"):
                 if name:
-                    group_data_new = {
-                        "name": name,
-                        "policies": selected_policies
-                    }
+                    group_data_new = GroupIn(
+                        name=name,
+                        policies=[p["id"] for p in selected_policies]
+                    )
                     
                     if is_edit:
-                        if update_group(st.session_state.edit_group_id, group_data_new):
-                            st.success("✅ Group updated successfully!")
-                            reset_forms()
-                            st.rerun()
-                        else:
-                            st.error("❌ Failed to update group")
+                        try:
+                            # Update policies in a single API call
+                            response = requests.put(
+                                f"{API_BASE_URL}/{st.session_state.edit_group_id}/policies",
+                                json={"policy_ids": group_data_new.policies}
+                            )
+                            if response.status_code == 200:
+                                st.success("✅ Group updated successfully!")
+                                reset_forms()
+                                st.rerun()
+                            else:
+                                st.error(f"❌ Failed to update group: {response.status_code}")
+                        except Exception as e:
+                            st.error(f"❌ Failed to update group: {str(e)}")
                     else:
-                        if create_group(group_data_new):
-                            st.success("✅ Group created successfully!")
-                            reset_forms()
-                            st.rerun()
-                        else:
-                            st.error("❌ Failed to create group")
+                        try:
+                            # First create the group
+                            group = create_new_group({"name": name})
+                            if group:
+                                # Then update its policies
+                                response = requests.put(
+                                    f"{API_BASE_URL}/{group['id']}/policies",
+                                    json={"policy_ids": group_data_new.policies}
+                                )
+                                if response.status_code == 200:
+                                    st.success("✅ Group created successfully!")
+                                    reset_forms()
+                                    st.rerun()
+                                else:
+                                    st.error(f"❌ Failed to attach policies: {response.status_code}")
+                            else:
+                                st.error("❌ Failed to create group")
+                        except Exception as e:
+                            st.error(f"❌ Failed to create group: {str(e)}")
                 else:
                     st.error("⚠️ Please fill in all required fields")
         
@@ -395,20 +417,24 @@ st.markdown("---")
 
 # Groups Section
 st.subheader("🏢 Groups")
+print("++++++++++++++++++++++++++++")
+print(groups)
 for group in groups:
     with st.container():
         col1, col2 = st.columns([4, 1])
         
         with col1:
             st.write(f"**{group['name']}**")
-            if group['policies']:
-                active_policies = [p["name"] for p in group['policies'] if p.get("active", True)]
-                policies_display = ", ".join(active_policies)
+            group_policies = group.get('policies', [])
+            
+            if group_policies:
+                active_policies = [p["name"] for p in group_policies if p.get("active", True)]
+                policies_display = ", ".join(active_policies) if active_policies else "None"
                 st.write(f"🔒 **Active Policies**: {policies_display}")
                 
                 # Show policy details in expander
-                with st.expander(f"View {len(group['policies'])} policies"):
-                    for policy in group['policies']:
+                with st.expander(f"View {len(group_policies)} policies"):
+                    for policy in group_policies:
                         status = "🟢 Active" if policy.get("active", True) else "🔴 Inactive"
                         st.write(f"**{policy['name']}** - {status}")
                         st.code(f"Pattern: {policy['pattern']}")
@@ -421,9 +447,15 @@ for group in groups:
             if st.button("✏️", key=f"edit_group_btn_{group['id']}"):
                 st.session_state.edit_group_id = group['id']
                 st.session_state.show_add_group = False
-                # st.session_state.show_add_user = False
-                # st.session_state.edit_user_id = None
                 st.rerun()
+            
+            # Add a delete button
+            if st.button("🗑️", key=f"delete_group_btn_{group['id']}"):
+                if delete_group(group['id']):
+                    st.success("✅ Group deleted successfully!")
+                    st.rerun()
+                else:
+                    st.error("❌ Failed to delete group")
         
         st.markdown("---")
 
