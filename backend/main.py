@@ -83,8 +83,8 @@ async def api_create_group(group: GroupIn):
 
 @app.get("/group")
 async def get_group_info(
-    groupId: str | None = Query(None),
-    name: str | None = Query(None)
+    groupId: Optional[str] = Query(None),
+    name: Optional[str] = Query(None)
 ):
     group = await get_group_with_policies(group_id=groupId, name=name)
     if not group:
@@ -123,12 +123,33 @@ async def sanitize(request: Request):
     prompt = body.get("prompt") or body.get("payload", "")
     group_id = body.get("groupId") or body.get("group_id")
     group_name = body.get("groupName") or body.get("group_name")
-    agent_id = body.get("agent_id")
+    agent_id = body.get("agent_id", "unknown-agent")
     
     if not prompt:
         raise HTTPException(status_code=400, detail="Missing 'prompt' or 'payload' in request body")
 
+    # Process through sanitization agent
     result = await agent.process(prompt, group_id=group_id, group_name=group_name)
+    
+    # Log to observability system if enabled
+    if OBSERVABILITY_ENABLED:
+        try:
+            # Determine status for logging
+            status = result.get("status", "unknown")
+            original_prompt = result.get("original_prompt", prompt)
+            sanitized_payload = result.get("redacted_prompt")
+            
+            # Import and use observability logging
+            from observability import observability
+            observability.insert_log(
+                agent_id=agent_id,
+                status=status,
+                payload=original_prompt,
+                sanitized_payload=sanitized_payload if sanitized_payload != original_prompt else None
+            )
+        except Exception as e:
+            print(f"⚠️ Failed to log to observability: {e}")
+    
     return result
 
 @app.post("/chat")

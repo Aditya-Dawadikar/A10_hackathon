@@ -1,5 +1,5 @@
 import os
-from typing import List
+from typing import List, Optional, Union
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel
@@ -45,7 +45,7 @@ async def create_policy(policy: PolicyIn) -> PolicyOut:
     result = await policies_collection.insert_one(doc)
     return PolicyOut(id=str(result.inserted_id), **doc)
 
-async def get_policy(policy_id: str) -> PolicyOut | None:
+async def get_policy(policy_id: str) -> Optional[PolicyOut]:
     doc = await policies_collection.find_one({"_id": ObjectId(policy_id)})
     if not doc:
         return None
@@ -57,7 +57,7 @@ async def list_policies() -> List[PolicyOut]:
         results.append(PolicyOut(id=str(doc["_id"]), **doc))
     return results
 
-async def update_policy(policy_id: str, policy: PolicyIn) -> PolicyOut | None:
+async def update_policy(policy_id: str, policy: PolicyIn) -> Optional[PolicyOut]:
     await policies_collection.update_one(
         {"_id": ObjectId(policy_id)}, {"$set": policy.dict()}
     )
@@ -76,7 +76,7 @@ async def create_group(group: GroupIn) -> GroupOut:
     result = await groups_collection.insert_one(doc)
     return GroupOut(id=str(result.inserted_id), **doc)
 
-async def get_group(group_id: str) -> GroupOut | None:
+async def get_group(group_id: str) -> Optional[GroupOut]:
     doc = await groups_collection.find_one({"_id": ObjectId(group_id)})
     if not doc:
         return None
@@ -88,7 +88,7 @@ async def list_groups() -> List[GroupOut]:
         results.append(GroupOut(id=str(doc["_id"]), name=doc["name"], policy_ids=doc.get("policy_ids", [])))
     return results
 
-async def update_group(group_id: str, name: str) -> GroupOut | None:
+async def update_group(group_id: str, name: str) -> Optional[GroupOut]:
     await groups_collection.update_one({"_id": ObjectId(group_id)}, {"$set": {"name": name}})
     doc = await groups_collection.find_one({"_id": ObjectId(group_id)})
     if not doc:
@@ -100,14 +100,14 @@ async def delete_group(group_id: str) -> bool:
     return result.deleted_count > 0
 
 # ---------- Group ↔ Policy Management ----------
-async def add_policy_to_group(group_id: str, policy_id: str) -> GroupOut | None:
+async def add_policy_to_group(group_id: str, policy_id: str) -> Optional[GroupOut]:
     await groups_collection.update_one(
         {"_id": ObjectId(group_id)},
         {"$addToSet": {"policy_ids": policy_id}}
     )
     return await get_group(group_id)
 
-async def remove_policy_from_group(group_id: str, policy_id: str) -> GroupOut | None:
+async def remove_policy_from_group(group_id: str, policy_id: str) -> Optional[GroupOut]:
     await groups_collection.update_one(
         {"_id": ObjectId(group_id)},
         {"$pull": {"policy_ids": policy_id}}
@@ -173,7 +173,7 @@ async def get_all_groups_with_policies():
 
     return groups
 
-async def update_group_policies(group_id: str, policy_ids: list[str]):
+async def update_group_policies(group_id: str, policy_ids: List[str]):
     await groups_collection.update_one(
         {"_id": ObjectId(group_id)},
         {"$set": {"policy_ids": policy_ids}}

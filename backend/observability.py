@@ -217,7 +217,7 @@ def get_logs_data(status: Optional[str] = None, limit: int = 10) -> List[Dict[st
     """Get logs data with optional status filter"""
     return observability.fetch_logs(status, limit)
 
-def parse_time_range(time_range: str) -> tuple[Optional[str], Optional[str]]:
+def parse_time_range(time_range: str):
     """Parse time range string into from/to timestamps"""
     now = datetime.now()
     
